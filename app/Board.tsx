@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { supabaseFetch } from "./supabase";
 
 type Post = {
   id: number;
@@ -9,58 +10,93 @@ type Post = {
   content: string;
   author: string;
   createdAt: string;
+  comments: Comment[];
 };
+
+type Comment = { id: number; author: string; content: string };
 
 const CATEGORY = "Q&A";
 
-const initialPosts: Post[] = [
-  {
-    id: 2,
-    category: CATEGORY,
-    title: "이번 주 인기 있는 골프웨어 컬러는 무엇인가요?",
-    content: "가을 시즌을 앞두고 많이 보이는 컬러 조합이 궁금합니다.",
-    author: "익명",
-    createdAt: "2026-10-02 10:30",
-  },
-  {
-    id: 1,
-    category: CATEGORY,
-    title: "요즘 많이 쓰는 드라이버 트렌드가 궁금해요",
-    content: "올해 출시된 드라이버 중 주목할 만한 흐름이 있을까요?",
-    author: "익명",
-    createdAt: "2026-10-01 09:00",
-  },
-];
+type Row = {
+  id: number;
+  category: string;
+  title: string;
+  content: string;
+  author: string;
+  created_at: string;
+  comments?: Comment[];
+};
 
-function formatNow() {
-  const d = new Date();
+function toPost(r: Row): Post {
+  return {
+    id: r.id,
+    category: r.category,
+    title: r.title,
+    content: r.content,
+    author: r.author,
+    createdAt: formatDate(r.created_at),
+    comments: r.comments ?? [],
+  };
+}
+
+function formatDate(iso: string) {
+  const d = new Date(iso);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 export default function Board() {
-  const [posts, setPosts] = useState<Post[]>(initialPosts);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [error, setError] = useState("");
   const [writing, setWriting] = useState(false);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const [pending, setPending] = useState<number[]>([]);
 
-  function handleSubmit(e: React.FormEvent) {
+  useEffect(() => {
+    supabaseFetch("posts?select=*,comments(id,author,content)&order=created_at.desc&comments.order=created_at.asc")
+      .then((rows: Row[]) => setPosts(rows.map(toPost)))
+      .catch(() => setError("글을 불러오지 못했습니다."));
+  }, []);
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !content.trim()) return;
-    setPosts((prev) => [
-      {
-        id: Math.max(0, ...prev.map((p) => p.id)) + 1,
-        category: CATEGORY,
-        title: title.trim(),
-        content: content.trim(),
-        author: "익명",
-        createdAt: formatNow(),
-      },
-      ...prev,
-    ]);
-    setTitle("");
-    setContent("");
-    setWriting(false);
+    try {
+      const [row]: Row[] = await supabaseFetch("posts", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ category: CATEGORY, title: title.trim(), content: content.trim() }),
+      });
+      setPosts((prev) => [toPost(row), ...prev]);
+      requestAiComment(row.id);
+      setTitle("");
+      setContent("");
+      setWriting(false);
+      setError("");
+    } catch {
+      setError("글을 등록하지 못했습니다.");
+    }
+  }
+
+  async function requestAiComment(postId: number) {
+    setPending((prev) => [...prev, postId]);
+    try {
+      const res = await fetch("/api/ai-comment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId }),
+      });
+      if (!res.ok) throw new Error();
+      const comment: Comment = await res.json();
+      setPosts((prev) =>
+        prev.map((p) => (p.id === postId ? { ...p, comments: [...p.comments, comment] } : p)),
+      );
+    } catch {
+      setError("AI 댓글을 작성하지 못했습니다.");
+    } finally {
+      setPending((prev) => prev.filter((id) => id !== postId));
+    }
   }
 
   return (
@@ -105,11 +141,18 @@ export default function Board() {
             </div>
             <h2>{post.title}</h2>
             <p>{post.content}</p>
+            {post.comments.map((c) => (
+              <div key={c.id} className="comment">
+                <span className="badge">{c.author}</span>
+                <p>{c.content}</p>
+              </div>
+            ))}
+            {pending.includes(post.id) && <p className="comment-pending">AI 댓글 작성 중…</p>}
           </li>
         ))}
       </ul>
 
-      <p className="notice">데이터베이스에 저장되지 않아 새로고침하면 작성한 글이 사라집니다.</p>
+      {error && <p className="notice">{error}</p>}
     </>
   );
 }

@@ -61,3 +61,7 @@ body {
 .badge { background: #ccfbf1; color: var(--accent); border-radius: 999px; padding: 2px 10px; font-weight: 600; }
 
 .notice { margin-top: 24px; font-size: 13px; color: var(--sub); text-align: center; }
+
+.comment { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(127, 127, 127, 0.1); }
+.comment p { margin-top: 4px; font-size: 14px; }
+.comment-pending { margin-top: 12px; font-size: 13px; color: var(--sub); }
